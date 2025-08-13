@@ -1,17 +1,17 @@
-import { BrowserRouter, Route } from 'react-router'
-import { DeployPage } from './pages/DeployPage'
-import { TerminalPage } from './pages/TerminalPage'
+import { BrowserRouter, Route, Routes } from 'react-router-dom';
+import { DeployPage } from './pages/DeployPage';
+import { TerminalPage } from './pages/TerminalPage';
 
 function App() {
   return (
     <BrowserRouter>
-      <Route>
+      <Routes>
         <Route path="/" element={<DeployPage />} />
         <Route path="/deploy" element={<DeployPage />} />
         <Route path="/terminal" element={<TerminalPage />} />
-      </Route>
+      </Routes>
     </BrowserRouter>
-  )
+  );
 }
 
-export default App
+export default App;

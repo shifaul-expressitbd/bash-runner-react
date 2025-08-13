@@ -12,17 +12,17 @@ export default defineConfig({
   server: {
     proxy: {
       "/api": {
-        target: "http://localhost:4000",
+        target: "http://31.97.62.51:4000",
         changeOrigin: true,
         secure: false,
       },
       "/login": {
-        target: "http://localhost:4000",
+        target: "http://31.97.62.51:4000",
         changeOrigin: true,
         secure: false,
       },
       "/auth-status": {
-        target: "http://localhost:4000",
+        target: "http://31.97.62.51:4000",
         changeOrigin: true,
         secure: false,
       },

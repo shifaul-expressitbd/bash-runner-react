@@ -1,141 +1,233 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react';
 
 interface TerminalProps {
-    commandId?: string
-    args?: any
-    onComplete?: (success: boolean) => void
+    commandId?: string;
+    args?: any;
+    onComplete?: (success: boolean) => void;
+    interactive?: boolean;
+    persistent?: boolean;
+    showControls?: boolean;
 }
 
-export const Terminal = ({ commandId, args, onComplete }: TerminalProps) => {
-    const [output, setOutput] = useState<string[]>([])
-    const [status, setStatus] = useState<'ready' | 'connecting' | 'running' | 'error'>('ready')
-    const [input, setInput] = useState('')
-    const outputEndRef = useRef<HTMLDivElement>(null)
-    const eventSourceRef = useRef<EventSource | null>(null)
+export const Terminal = ({
+    commandId,
+    args,
+    onComplete,
+    interactive = true,
+    persistent = false,
+    showControls = true
+}: TerminalProps) => {
+    const [output, setOutput] = useState<string[]>([]);
+    const [status, setStatus] = useState<'ready' | 'connecting' | 'running' | 'error'>('ready');
+    const [input, setInput] = useState('');
+    const outputEndRef = useRef<HTMLDivElement>(null);
+    const eventSourceRef = useRef<EventSource | null>(null);
 
     useEffect(() => {
-        if (commandId) {
-            startCommand(commandId, args)
+        if (commandId && args) {
+            startCommand(commandId, args);
         }
+
         return () => {
-            eventSourceRef.current?.close()
-        }
-    }, [commandId, args])
+            stopCommand();
+        };
+    }, [commandId, args]);
 
     const scrollToBottom = () => {
-        outputEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-    }
+        outputEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    };
 
     useEffect(() => {
-        scrollToBottom()
-    }, [output])
+        scrollToBottom();
+    }, [output]);
 
-    const startCommand = async (cmdId: string, cmdArgs: any = {}) => {
-        setStatus('connecting')
-        setOutput(prev => [...prev, `🚀 Starting command: ${cmdId}`])
-
-        try {
-            eventSourceRef.current?.close()
-
-            const sseUrl = new URL(`/api/run-realtime/${cmdId}`, import.meta.env.VITE_API_BASE_URL || window.location.origin)
-            if (cmdArgs && Object.keys(cmdArgs).length > 0) {
-                sseUrl.searchParams.append('args', encodeURIComponent(JSON.stringify(cmdArgs)))
-            }
-
-            eventSourceRef.current = new EventSource(sseUrl.toString())
-
-            eventSourceRef.current.onopen = () => {
-                setStatus('running')
-                setOutput(prev => [...prev, '✅ Connected to command stream'])
-            }
-
-            eventSourceRef.current.onerror = (e) => {
-                console.error('SSE Error:', e)
-                setStatus('error')
-                setOutput(prev => [...prev, '❌ Connection error'])
-                onComplete?.(false)
-            }
-
-            eventSourceRef.current.addEventListener('stdout', (e) => {
-                setOutput(prev => [...prev, e.data])
-            })
-
-            eventSourceRef.current.addEventListener('stderr', (e) => {
-                setOutput(prev => [...prev, `[ERROR] ${e.data}`])
-            })
-
-            eventSourceRef.current.addEventListener('result', (e) => {
-                const result = JSON.parse(e.data)
-                if (result.success) {
-                    setOutput(prev => [...prev, `✅ Command completed (exit code: ${result.exitCode})`])
-                    onComplete?.(true)
-                } else {
-                    setOutput(prev => [...prev, `❌ Command failed: ${result.error}`])
-                    onComplete?.(false)
-                }
-                setStatus('ready')
-            })
-        } catch (err) {
-            console.error('Command error:', err)
-            setStatus('error')
-            setOutput(prev => [...prev, `❌ Failed to start command: ${err instanceof Error ? err.message : String(err)}`])
-            onComplete?.(false)
+    const stopCommand = () => {
+        if (eventSourceRef.current) {
+            eventSourceRef.current.close();
+            setStatus('ready');
+            addToOutput('⏹ Command stopped by user');
         }
-    }
+    };
+
+    const clearOutput = () => {
+        setOutput([]);
+    };
+
+    const addToOutput = (lines: string | string[]) => {
+        const newLines = Array.isArray(lines) ? lines : [lines];
+        setOutput(prev => [...prev, ...newLines]);
+    };
+
+    // Basic ANSI escape code removal while preserving colors
+    const cleanAnsi = (text: string): string => {
+        // Remove unsupported ANSI codes but keep basic color codes
+        return text.replace(/\x1B\[([0-9]{1,2}(;[0-9]{1,2})?)?[mGK]/g, '');
+    };
+
+    const startCommand = (cmdId: string, cmdArgs: any = {}) => {
+        if (!cmdId) return;
+
+        if (!persistent) {
+            clearOutput();
+        }
+
+        setStatus('connecting');
+        addToOutput(`🚀 Starting command: ${cmdId}`);
+
+        eventSourceRef.current?.close();
+
+        const baseUrl = import.meta.env.VITE_API_BASE_URL || window.location.origin;
+        const sseUrl = new URL(`/api/run-realtime/${cmdId}`, baseUrl);
+
+        if (Object.keys(cmdArgs).length > 0) {
+            sseUrl.searchParams.append('args', encodeURIComponent(JSON.stringify(cmdArgs)));
+        }
+
+        const es = new EventSource(sseUrl.toString(), { withCredentials: true });
+        eventSourceRef.current = es;
+
+        es.onopen = () => {
+            setStatus('running');
+            addToOutput('✅ Connected to command stream');
+        };
+
+        es.onerror = (err) => {
+            console.error('SSE error:', err);
+            setStatus('error');
+            addToOutput('❌ Connection error');
+            onComplete?.(false);
+            es.close();
+        };
+
+        es.addEventListener('stdout', (e) => {
+            try {
+                const data = JSON.parse(e.data).data;
+                addToOutput(cleanAnsi(data));
+            } catch (error) {
+                addToOutput(`[DATA PARSE ERROR] ${e.data}`);
+            }
+        });
+
+        es.addEventListener('stderr', (e) => {
+            try {
+                const data = JSON.parse(e.data).data;
+                addToOutput(`[ERROR] ${cleanAnsi(data)}`);
+            } catch (error) {
+                addToOutput(`[ERROR DATA] ${e.data}`);
+            }
+        });
+
+        es.addEventListener('result', (e) => {
+            try {
+                const result = JSON.parse(e.data);
+                if (result.success) {
+                    addToOutput(`✅ Command completed (exit code: ${result.exitCode})`);
+                } else {
+                    addToOutput(`❌ Command failed: ${cleanAnsi(result.error || 'Unknown error')}`);
+                }
+                setStatus('ready');
+                onComplete?.(result.success);
+            } catch (error) {
+                addToOutput('❌ Failed to parse command result');
+                onComplete?.(false);
+            } finally {
+                es.close();
+            }
+        });
+    };
 
     const handleSubmit = (e: React.FormEvent) => {
-        e.preventDefault()
-        if (!input.trim()) return
+        e.preventDefault();
+        if (!input.trim() || status !== 'ready') return;
 
-        const [cmd, ...rest] = input.split(' ')
+        const [cmd, ...rest] = input.split(' ');
         const args = rest.reduce((acc, pair) => {
-            const [key, value] = pair.split('=')
-            if (key && value) acc[key] = value
-            return acc
-        }, {} as Record<string, string>)
+            const [key, value] = pair.split('=');
+            if (key && value) acc[key] = value;
+            return acc;
+        }, {} as Record<string, string>);
 
-        startCommand(cmd, args)
-        setInput('')
-    }
+        startCommand(cmd, args);
+        setInput('');
+    };
+
+    // Determine line color based on content
+    const getLineColor = (line: string) => {
+        if (line.includes('[ERROR]') || line.startsWith('❌')) return 'text-red-400';
+        if (line.startsWith('✅') || line.includes('[SUCCESS]')) return 'text-green-400';
+        if (line.includes('[WARNING]')) return 'text-yellow-400';
+        if (line.includes('[INFO]')) return 'text-blue-400';
+        if (line.startsWith('🚀')) return 'text-purple-400';
+        if (line.startsWith('⏹')) return 'text-gray-400';
+        return 'text-gray-200';
+    };
 
     return (
-        <div className="flex flex-col h-full bg-gray-900 rounded-lg shadow-xl">
+        <div className="flex flex-col h-full bg-gray-900 rounded-lg shadow-xl overflow-hidden min-h-[300px]">
             <div className="p-4 bg-gray-800 rounded-t-lg flex justify-between items-center">
                 <div className="flex items-center gap-2">
-                    <span className={`w-3 h-3 rounded-full ${status === 'ready' ? 'bg-green-500' :
+                    <span
+                        className={`w-3 h-3 rounded-full ${status === 'ready' ? 'bg-green-500' :
                             status === 'running' ? 'bg-yellow-500' :
                                 'bg-red-500'
-                        }`}></span>
-                    <span>Terminal</span>
+                            }`}
+                    />
+                    <span className="font-mono text-sm">Terminal</span>
                 </div>
+
+                {showControls && (
+                    <div className="flex items-center gap-2">
+                        {status !== 'ready' && (
+                            <button
+                                onClick={stopCommand}
+                                className="px-2 py-1 text-xs bg-red-600 hover:bg-red-700 rounded text-white font-mono"
+                            >
+                                Stop
+                            </button>
+                        )}
+                        <button
+                            onClick={clearOutput}
+                            className="px-2 py-1 text-xs bg-gray-600 hover:bg-gray-700 rounded text-white font-mono"
+                        >
+                            Clear
+                        </button>
+                        {status !== 'ready' && (
+                            <span className="text-xs text-gray-400 font-mono">
+                                {status === 'connecting' ? 'Connecting...' :
+                                    status === 'running' ? 'Running...' : 'Error'}
+                            </span>
+                        )}
+                    </div>
+                )}
             </div>
 
-            <div className="flex-1 p-4 bg-black overflow-y-auto font-mono text-sm">
+            <div className="flex-1 p-4 bg-black overflow-y-auto font-mono text-sm min-h-[300px] max-h-[300px]">
                 {output.map((line, i) => (
-                    <div key={i} className={
-                        line.startsWith('[ERROR]') ? 'text-red-400' :
-                            line.startsWith('✅') ? 'text-green-400' :
-                                'text-gray-100'
-                    }>
+                    <div
+                        key={i}
+                        className={`mb-1 whitespace-pre-wrap ${getLineColor(line)}`}
+                    >
                         {line}
                     </div>
                 ))}
                 <div ref={outputEndRef} />
             </div>
 
-            <form onSubmit={handleSubmit} className="p-4 bg-gray-800 rounded-b-lg">
-                <div className="flex gap-2 items-center">
-                    <span className="text-green-400">$</span>
-                    <input
-                        type="text"
-                        value={input}
-                        onChange={(e) => setInput(e.target.value)}
-                        className="flex-1 bg-gray-700 text-white px-2 py-1 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        disabled={status !== 'ready'}
-                        placeholder="Enter command..."
-                    />
-                </div>
-            </form>
+            {interactive && (
+                <form onSubmit={handleSubmit} className="p-4 bg-gray-800 rounded-b-lg border-t border-gray-700">
+                    <div className="flex gap-2 items-center">
+                        <span className="text-green-400 select-none">$</span>
+                        <input
+                            type="text"
+                            value={input}
+                            onChange={(e) => setInput(e.target.value)}
+                            className="flex-1 bg-gray-700 text-white px-2 py-1 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono text-sm"
+                            disabled={status !== 'ready'}
+                            placeholder="Enter command..."
+                        />
+                    </div>
+                </form>
+            )}
         </div>
-    )
-}
+    );
+};
