@@ -5,6 +5,7 @@ interface EnvVarInputProps {
     placeholder?: string;
     description?: string;
     readOnlyKey?: boolean;
+    onPaste?: (e: React.ClipboardEvent<HTMLInputElement>) => void;
 }
 
 export const EnvVarInput = ({
@@ -24,8 +25,8 @@ export const EnvVarInput = ({
                     placeholder={placeholder}
                     readOnly={readOnlyKey}
                     className={`w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white placeholder-gray-400 focus:outline-none focus:ring-2 font-mono text-sm ${readOnlyKey
-                            ? 'bg-gray-600 cursor-not-allowed text-blue-400'
-                            : 'focus:ring-blue-500'
+                        ? 'bg-gray-600 cursor-not-allowed text-blue-400'
+                        : 'focus:ring-blue-500'
                         }`}
                 />
             </div>
